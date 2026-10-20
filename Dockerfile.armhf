@@ -1,0 +1,36 @@
+FROM --platform=$BUILDPLATFORM golang:latest AS builder
+
+WORKDIR /build
+
+COPY . /build
+
+ARG TARGETOS TARGETARCH
+
+RUN python3 build.py --platform $TARGETOS --arch $TARGETARCH --build-tags noasm
+
+FROM debian:trixie-slim
+
+RUN groupadd --system --gid 1500 influxdb && \
+    useradd --system --uid 1500 --gid influxdb --home-dir /var/lib/influxdb --shell /bin/false influxdb
+    
+RUN mkdir -p /var/lib/influxdb /etc/influxdb && \
+    chown -R influxdb:influxdb /var/lib/influxdb /etc/influxdb
+    
+COPY --from=builder /build/build/influx /usr/bin/influx
+COPY --from=builder /build/build/influxd /usr/bin/influxd
+COPY --from=builder /build/build/influx_inspect /usr/bin/influx_inspect
+COPY --from=builder /build/build/influx_stress /usr/bin/influx_stress
+COPY --from=builder /build/build/influx_tools /usr/bin/influx_tools
+COPY --from=builder /build/etc/config.sample.toml /etc/influxdb/influxdb.conf
+
+RUN sed -i s'/  # tsm-use-seek = false/  tsm-use-seek = true/' /etc/influxdb/influxdb.conf
+
+EXPOSE 8086
+VOLUME /var/lib/influxdb
+
+COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/init-influxdb.sh /init-influxdb.sh
+RUN chmod +x /entrypoint.sh /init-influxdb.sh
+USER influxdb
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["influxd"]
